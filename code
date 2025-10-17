@@ -1,0 +1,142 @@
+Rpi
+
+import serial
+import time
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Connect to Arduino
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+time.sleep(2)
+
+# Occupancy grid (3 columns: left, center, right)
+# Start with empty grid, we’ll append rows
+grid = []
+
+def update_map(right, front, left):
+    # 1 = obstacle, 0 = free
+    row = [0, 0, 0]
+    row[0] = 1 if left < 30 else 0
+    row[1] = 1 if front < 30 else 0
+    row[2] = 1 if right < 30 else 0
+    grid.append(row)
+
+def draw_map():
+    plt.clf()
+    arr = np.array(grid)
+    plt.imshow(arr, cmap='gray_r', origin='lower')
+    plt.title("Occupancy Grid Map (White=Free, Black=Occupied)")
+    plt.xlabel("Left - Center - Right")
+    plt.ylabel("Step forward")
+    plt.pause(0.1)
+
+plt.ion()
+plt.figure()
+
+try:
+    while True:
+        line = ser.readline().decode().strip()
+        if line:
+            try:
+                right, front, left = map(float, line.split(','))
+                print(f"R:{right:.1f} F:{front:.1f} L:{left:.1f}")
+                update_map(right, front, left)
+                draw_map()
+            except:
+                continue
+except KeyboardInterrupt:
+    print("Mapping stopped.")
+    ser.close()
+
+
+
+Arduino 
+
+ #include <Servo.h>
+
+#define TRIG_PIN  A5
+#define ECHO_PIN A4
+#define SERVO_PIN 3
+#define ENA 5
+#define IN1 8
+#define IN2 7
+#define ENB 6
+#define IN3 9
+#define IN4 11
+
+Servo servo;
+
+long getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  long distance = duration * 0.034 / 2; // cm
+  return distance;
+}
+
+void moveForward() {
+  analogWrite(ENA, 150);
+  analogWrite(ENB, 150);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  delay(500);  // Move one cell forward
+  stopMotors();
+}
+
+void stopMotors() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  
+  servo.attach(SERVO_PIN);
+  servo.write(90);  // center position (forward)
+  delay(1000);
+}
+
+void loop() {
+  // Check 3 directions
+  int angles[3] = {30, 90, 150}; // Right, Forward, Left
+  long distances[3];
+
+  for (int i = 0; i < 3; i++) {
+    servo.write(angles[i]);
+    delay(400);
+    distances[i] = getDistance();
+  }
+
+  // Send data as CSV: right,front,left
+  Serial.print(distances[0]);
+  Serial.print(",");
+  Serial.print(distances[1]);
+  Serial.print(",");
+  Serial.println(distances[2]);
+
+  // Decision: move forward if front > 10 cm
+  if (distances[1] > 30) {
+    moveForward();
+  } else {
+    stopMotors();
+    while (1); // Stop mapping
+  }
+
+  delay(500);
+}
+
